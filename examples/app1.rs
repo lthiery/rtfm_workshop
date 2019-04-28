@@ -14,6 +14,10 @@ use hal::nrf52832_pac as pac;
 use pac::interrupt;
 use rtfm::app;
 
+#[link_section = ".app_memory"]
+// Give half of RAM to be dedicated APP memory
+static mut APP_MEMORY: [u8; 0x10000] = [0; 0x10000];
+
 #[app(device = crate::hal::target)]
 const APP: () = {
     #[init]
