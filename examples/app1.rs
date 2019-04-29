@@ -119,6 +119,13 @@ const RETURN_TO_THREAD_MODE_FP_PSP: u32 = 0xFFFFFFED;
 // 0x0003002c      0x20002000      0x00002000      0x20002c00
 // 0x00000000      0x00000001      0x00030055      0x01000000
 
+/// This is used in the syscall handler. When set to 1 this means the
+/// svc_handler was called. Marked `pub` because it is used in the cortex-m*
+/// specific handler.
+#[no_mangle]
+#[used]
+pub static mut SYSCALL_FIRED: usize = 0;
+
 #[app(device = crate::hal::target)]
 const APP: () = {
     static mut TOCKRAM: [u32; 1024] = [0; 1024];
@@ -130,30 +137,42 @@ const APP: () = {
     }
     #[idle(resources = [TOCKRAM])]
     fn idle() -> ! {
-        hprintln!("idle").unwrap();
+        let mut init = 0;
+        loop {
+            hprintln!("idle").unwrap();
 
-        resources.TOCKRAM[1024-8] = 0x0003002c;
-        resources.TOCKRAM[1024-7] = 0x20002000;
-        resources.TOCKRAM[1024-6] = 0x00002000;
-        resources.TOCKRAM[1024-5] = 0x20002c00;
-        resources.TOCKRAM[1024-4] = 0x00000000;
-        resources.TOCKRAM[1024-3] = 0x00000001;
-        resources.TOCKRAM[1024-2] = 0x00030055;
-        resources.TOCKRAM[1024-1] = 0x01000000;
+            if init == 0 {
+                init +=1;
+                resources.TOCKRAM[1024-8] = 0x0003002c;
+                resources.TOCKRAM[1024-7] = 0x20002000;
+                resources.TOCKRAM[1024-6] = 0x00002000;
+                resources.TOCKRAM[1024-5] = 0x20002c00;
+                resources.TOCKRAM[1024-4] = 0x00000000;
+                resources.TOCKRAM[1024-3] = 0x00000001;
+                resources.TOCKRAM[1024-2] = 0x00030055;
+                resources.TOCKRAM[1024-1] = 0x01000000;
 
-        hprintln!("psp = {:x?}", (&resources.TOCKRAM[1024-8]) as *const u32);
+                hprintln!("psp = {:x?}", (&resources.TOCKRAM[1024-8]) as *const u32);
 
-        unsafe {
-            asm!("
-                /* Load new stack into PSP */
-                msr psp, r0
+                unsafe {
+                    asm!("
+                        /* Load new stack into PSP */
+                        msr psp, r0
 
-                /* Jump to SVCHandler */
-                svc #124"
-                : : "{r0}" (&resources.TOCKRAM[1024-8]) : : "volatile");
+                        /* Jump to SVCHandler */
+                        svc #124"
+                        : : "{r0}" (&resources.TOCKRAM[1024-8]) : : "volatile");
+                }
+            }
+            else {
+                hprintln!("back").unwrap();
+
+            }
+            
         }
+        
 
-        loop {}
+        //loop {}
     }
 
     #[exception]
@@ -161,18 +180,37 @@ const APP: () = {
     fn SVCall() {
         hprintln!("SVCALL");
         unsafe {
-            asm!(
-                "
-                // Return to Thread mode, exception return uses non-floating-point state from
-                // the PSP and execution uses PSP after return.
-                movw lr, #0xfffd
-                movt lr, #0xffff
-                bx lr"
-                    : : : : "volatile"
-            );
-        }
+            // asm!(
+            //     "
+            //     // Return to Thread mode, exception return uses non-floating-point state from
+            //     // the PSP and execution uses PSP after return.
+            //     movw lr, #0xfffd
+            //     movt lr, #0xffff
+            //     bx lr"
+            //         : : : : "volatile"
+            // );
+        
 
-        loop {}
+             asm!(
+        "
+            // if coming from kernel
+            cmp lr, #0xfffffffd
+            bne to_kernel
+
+            movw lr, #0xfffd
+            movt lr, #0xffff
+            bx lr
+          to_kernel:
+
+            ldr r0, =SYSCALL_FIRED
+            mov r1, #1
+            str r1, [r0, #0]
+
+            movw lr, #0xfffd
+            movt lr, #0xffff
+            bx lr"
+            : : : : "volatile" );
+         };
     }
 
     #[interrupt]
