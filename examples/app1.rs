@@ -57,39 +57,39 @@ const RETURN_TO_THREAD_MODE_FP_PSP: u32 = 0xFFFFFFED;
 // R1
 // R0
 
-#[repr(C, align(16))]
-#[derive(Copy, Clone)]
-pub struct stack_frame {
-    align: u32,
-    //align1: u32,
-    xPSR: u32,
-    PC: u32,
-    LR: u32,
-    R12: u32,
-    R3: u32,
-    R2: u32,
-    R1: u32,
-    // aligned to 16
-    R0: u32,
-}
+// #[repr(C, align(16))]
+// #[derive(Copy, Clone)]
+// pub struct stack_frame {
+//     align: u32,
+//     //align1: u32,
+//     xPSR: u32,
+//     PC: u32,
+//     LR: u32,
+//     R12: u32,
+//     R3: u32,
+//     R2: u32,
+//     R1: u32,
+//     // aligned to 16
+//     R0: u32,
+// }
 
-impl stack_frame {
-    const fn new() -> stack_frame {
-        stack_frame {
-            align: 0,
-            // align1: 0,
-            xPSR: 0,
-            PC: 0,
+// impl stack_frame {
+//     const fn new() -> stack_frame {
+//         stack_frame {
+//             align: 0,
+//             // align1: 0,
+//             xPSR: 0,
+//             PC: 0,
 
-            LR: 0,
-            R12: 0,
-            R3: 0,
-            R2: 0,
-            R1: 0,
-            R0: 0,
-        }
-    }
-}
+//             LR: 0,
+//             R12: 0,
+//             R3: 0,
+//             R2: 0,
+//             R1: 0,
+//             R0: 0,
+//         }
+//     }
+// }
 
 // fn switch_to_user(
 //     mut user_stack: *const usize,
@@ -116,9 +116,12 @@ impl stack_frame {
 //     user_stack
 // }
 
+// 0x0003002c      0x20002000      0x00002000      0x20002c00
+// 0x00000000      0x00000001      0x00030055      0x01000000
+
 #[app(device = crate::hal::target)]
 const APP: () = {
-    static mut TOCKRAM: [stack_frame; 10] = [stack_frame::new(); 10];
+    static mut TOCKRAM: [u32; 1024] = [0; 1024];
 
     #[init]
     fn init() {
@@ -129,36 +132,32 @@ const APP: () = {
     fn idle() -> ! {
         hprintln!("idle").unwrap();
 
-        let user_stack = stack_frame {
-            align: 0,
-            // align1: 0,
-            xPSR: 0,
-            PC: tock_fn as u32,
-            LR: 0,
-            R12: 0,
-            R3: 0,
-            R2: 0,
-            R1: 0,
-            R0: 0,
-        };
+        resources.TOCKRAM[1024-8] = 0x0003002c;
+        resources.TOCKRAM[1024-7] = 0x20002000;
+        resources.TOCKRAM[1024-6] = 0x00002000;
+        resources.TOCKRAM[1024-5] = 0x20002c00;
+        resources.TOCKRAM[1024-4] = 0x00000000;
+        resources.TOCKRAM[1024-3] = 0x00000001;
+        resources.TOCKRAM[1024-2] = 0x00030055;
+        resources.TOCKRAM[1024-1] = 0x01000000;
 
-        resources.TOCKRAM[9] = user_stack;
-        hprintln!("psp = {:x?}", (&resources.TOCKRAM[9].R0) as *const u32);
+        hprintln!("psp = {:x?}", (&resources.TOCKRAM[1024-8]) as *const u32);
 
         unsafe {
             asm!("
-                // Set thread mode to unprivileged 
-                // mov r0, #1
-                // msr CONTROL, r0
-                msr psp, r1
+                /* Load new stack into PSP */
+                msr psp, r0
+
+                /* Jump to SVCHandler */
                 svc #124"
-                : : "{r1}" (&resources.TOCKRAM[9].R0) : : "volatile");
+                : : "{r0}" (&resources.TOCKRAM[1024-8]) : : "volatile");
         }
 
         loop {}
     }
 
     #[exception]
+    #[naked]
     fn SVCall() {
         hprintln!("SVCALL");
         unsafe {
