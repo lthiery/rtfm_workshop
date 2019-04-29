@@ -9,8 +9,6 @@ use cortex_m_semihosting::hprintln;
 use dwm1001::nrf52832_hal as hal;
 use rtfm::app;
 
-static mut APP_MEMORY: [u8; 0x1000] = [0; 0x1000];
-
 #[link_section = "APP"]
 // Give half of RAM to be dedicated APP memory
 static mut APP_MEMORY: [u8; 0x10000] = [0; 0x10000];
