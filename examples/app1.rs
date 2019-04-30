@@ -5,9 +5,14 @@
 #![no_main]
 #![no_std]
 #![feature(asm, const_fn, core_intrinsics, naked_functions)]
+#![feature(crate_visibility_modifier)]
 
 use core::sync::atomic::{self, Ordering};
 use cortex_m::asm;
+
+mod tock;
+
+use tock::*;
 
 
 // pub use cortexm::nvic;
@@ -48,76 +53,12 @@ const RETURN_TO_THREAD_MODE_NO_FP_MSP: u32 = 0xFFFFFFE9;
 // and execution uses PSP after return.
 const RETURN_TO_THREAD_MODE_FP_PSP: u32 = 0xFFFFFFED;
 
-// xPSR
-// PC
-// LR
-// R12
-// R3
-// R2
-// R1
-// R0
 
-// #[repr(C, align(16))]
-// #[derive(Copy, Clone)]
-// pub struct stack_frame {
-//     align: u32,
-//     //align1: u32,
-//     xPSR: u32,
-//     PC: u32,
-//     LR: u32,
-//     R12: u32,
-//     R3: u32,
-//     R2: u32,
-//     R1: u32,
-//     // aligned to 16
-//     R0: u32,
-// }
 
-// impl stack_frame {
-//     const fn new() -> stack_frame {
-//         stack_frame {
-//             align: 0,
-//             // align1: 0,
-//             xPSR: 0,
-//             PC: 0,
+// #[link_section = ".app"]
+// // Give half of RAM to be dedicated APP memory
+static mut APP_MEMORY_BASE: * const u8 = 0x00030000 as * const u8;
 
-//             LR: 0,
-//             R12: 0,
-//             R3: 0,
-//             R2: 0,
-//             R1: 0,
-//             R0: 0,
-//         }
-//     }
-// }
-
-// fn switch_to_user(
-//     mut user_stack: *const usize,
-//     process_regs: &mut [usize; 8],
-// ) -> *const usize {
-//     asm!("
-//     /* Load bottom of stack into Process Stack Pointer */
-//     msr psp, $0
-
-//     /* Load non-hardware-stacked registers from Process stack */
-//     /* Ensure that $2 is stored in a callee saved register */
-//     ldmia $2, {r4-r11}
-
-//     /* SWITCH */
-//     svc 0xff /* It doesn't matter which SVC number we use here */
-//     /* Push non-hardware-stacked registers into Process struct's */
-//     /* regs field */
-//     stmia $2, {r4-r11}
-
-//     mrs $0, PSP /* PSP into r0 */"
-//     : "={r0}"(user_stack)
-//     : "{r0}"(user_stack), "{r1}"(process_regs)
-//     : "r4","r5","r6","r7","r8","r9","r10","r11" : "volatile" );
-//     user_stack
-// }
-
-// 0x0003002c      0x20002000      0x00002000      0x20002c00
-// 0x00000000      0x00000001      0x00030055      0x01000000
 
 /// This is used in the syscall handler. When set to 1 this means the
 /// svc_handler was called. Marked `pub` because it is used in the cortex-m*
@@ -128,31 +69,50 @@ pub static mut SYSCALL_FIRED: usize = 0;
 
 #[app(device = crate::hal::target)]
 const APP: () = {
-    static mut TOCKRAM: [u32; 1024] = [0; 1024];
+    static mut TOCKRAM: [usize; 1024] = [0; 1024];
 
     #[init]
     fn init() {
         hprintln!("init").unwrap();
+
+        
+
         rtfm::pend(interrupt::SWI0_EGU0);
+
+
     }
     #[idle(resources = [TOCKRAM])]
     fn idle() -> ! {
+
         let mut init = 0;
         loop {
             hprintln!("idle").unwrap();
 
-            if init == 0 {
-                init +=1;
-                resources.TOCKRAM[1024-8] = 0x0003002c;
-                resources.TOCKRAM[1024-7] = 0x20002000;
-                resources.TOCKRAM[1024-6] = 0x00002000;
-                resources.TOCKRAM[1024-5] = 0x20002c00;
+            let app_header = unsafe {tbf_header::parse_and_validate(APP_MEMORY_BASE)};
+
+            if let Some(app) = app_header {
+
+                let entry_function;
+                unsafe {
+                    entry_function = process::FunctionCall {
+                        pc: (APP_MEMORY_BASE as usize) + app.get_init_function_offset() as usize,
+                        argument0: (APP_MEMORY_BASE as usize) + app.get_protected_size() as usize,
+                        argument1: resources.TOCKRAM.as_ptr() as usize,
+                        argument2: resources.TOCKRAM.len(),
+                        argument3: resources.TOCKRAM.as_ptr() as usize,
+                    };
+                }
+
+                hprintln!("entry_function {:?}", entry_function);
+
+                resources.TOCKRAM[1024-8] = entry_function.argument0;
+                resources.TOCKRAM[1024-7] = entry_function.argument1;
+                resources.TOCKRAM[1024-6] = entry_function.argument2;
+                resources.TOCKRAM[1024-5] = entry_function.argument3;
                 resources.TOCKRAM[1024-4] = 0x00000000;
                 resources.TOCKRAM[1024-3] = 0x00000001;
-                resources.TOCKRAM[1024-2] = 0x00030055;
+                resources.TOCKRAM[1024-2] = entry_function.pc;
                 resources.TOCKRAM[1024-1] = 0x01000000;
-
-                hprintln!("psp = {:x?}", (&resources.TOCKRAM[1024-8]) as *const u32);
 
                 unsafe {
                     asm!("
@@ -164,11 +124,6 @@ const APP: () = {
                         : : "{r0}" (&resources.TOCKRAM[1024-8]) : : "volatile");
                 }
             }
-            else {
-                hprintln!("back").unwrap();
-
-            }
-            
         }
         
 
