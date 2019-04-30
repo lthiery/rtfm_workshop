@@ -52,7 +52,6 @@ const RETURN_TO_THREAD_MODE_FP_PSP: u32 = 0xFFFFFFED;
 #[derive(Copy, Clone)]
 pub struct stack_frame {
     align: u32,
-
     R0: u32,
     R1: u32,
     R2: u32,
@@ -68,7 +67,6 @@ impl stack_frame {
     const fn new() -> stack_frame {
         stack_frame {
             align: 0,
-
             xPSR: 0,
             PC: 0,
             LR: 0,
@@ -141,7 +139,10 @@ const APP: () = {
                 // mov r0, #1
                 // msr CONTROL, r0
                 msr psp, r1
-                svc #124"
+                ldmia r2, {r4-r11}
+                svc #124
+                stmia r2, {r4-r11}
+                mrs r1, psp"
                 : : "{r1}" (&resources.TOCKRAM[9].R0) : : "volatile");
         }
 
